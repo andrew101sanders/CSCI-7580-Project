@@ -11,23 +11,28 @@
 # - [x] ZeRO Algorithm Enabling ///// AS
 # 
 # ### Dependent Variables:
-# - [ ] Training Time​ ///// BB
-# - [ ] Throughput (Samples/Second)​ ///// BB
+# - [x] Training Time​ ///// BB
+# - [x] Throughput (Samples/Second)​ ///// BB
 # - [ ] Resource Utilization​ (nvidia-smi maybe with watch, idk about cpu, idk about ram, maybe htop/top has something to help with this)
 # - [ ] CNN Performance ///// BB
+#     - [x] Accuracy
 #     - [ ] F1-Score
-#     - [ ] Precision
-#     - [ ] Recall
+#     - [x] Precision
+#     - [x] Recall
 #     - [ ] AUC
 #     - [ ] AUPRC
 
 # %%
 import deepspeed
 import torch
+import time
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, models, transforms
 from torchvision.transforms import ToTensor
+from sklearn.metrics import precision_score, recall_score, roc_auc_score, average_precision_score
+import torch.nn.functional as F
+
 
 # %%
 # Download training data from open datasets.
@@ -119,7 +124,8 @@ def create_ds_config(batch_size=64, lr=0.001, zero_enabled=True):
         "zero_allow_untested_optimizer": True,
         "gradient_accumulation_steps": 1,
         "gradient_clipping": 1.0,
-        "wall_clock_breakdown": False
+        "wall_clock_breakdown": False,
+        "steps_per_print": 10000
     }
     return ds_config
 
@@ -128,6 +134,7 @@ def create_ds_config(batch_size=64, lr=0.001, zero_enabled=True):
 def train(dataloader, model_engine, loss_fn):
     size = len(dataloader.dataset)
     model_engine.train()
+    start_time = time.time()  # Get training start time
 
     for batch, (X, y) in enumerate(dataloader):
         # Ensure data is on the correct device
@@ -145,58 +152,82 @@ def train(dataloader, model_engine, loss_fn):
             loss, current = loss.item(), (batch + 1) * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
+    training_time = time.time() - start_time  # Calculate the total training time
+    return training_time
+
 def test(dataloader, model_engine, loss_fn):
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
     test_loss, correct = 0, 0
+    all_probs = []
+    all_preds = []  # List to store all predictions
+    all_targets = []
 
-    # Ensure model is in evaluation mode
     model_engine.eval()
-
     with torch.no_grad():
         for X, y in dataloader:
-            # Ensure data is on the correct device
             X, y = X.to(model_engine.local_rank).half(), y.to(model_engine.local_rank)
             pred = model_engine(X)
-            test_loss += loss_fn(pred, y).item()
-            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+            probabilities = F.softmax(pred, dim=1)
 
-    test_loss /= num_batches
-    correct /= size
-    print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+            correct += (probabilities.argmax(1) == y).type(torch.float).sum().item()
+            all_probs.extend(probabilities.tolist())
+            all_preds.extend(probabilities.argmax(1).tolist())  # Store all predictions
+            all_targets.extend(y.tolist())
+
+    accuracy = 100 * correct / size
+    precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
+    recall = recall_score(all_targets, all_preds, average='macro', zero_division=0)
+    # auc = roc_auc_score(all_targets, all_probs, average='macro', multi_class='ovr')
+    # auprc = average_precision_score(all_targets, all_probs, average='macro')
+    # auc, auprc = 0
+
+    return accuracy, precision, recall
+# , auc, auprc
+
 
 # %%
 # Training and Testing Model
 
-for model in models_list: 
-    print(f"Training {model[0]}")
-    for dataset in datasets_list:
-        print(f"Using dataset {dataset[0]}")
-        for batch_size in [64, 128]:
+with open('training_results.txt', 'w') as file:  # Open a file in append mode
+    for model in models_list: 
+        # print(f"Training {model[0]}")
+        for dataset in datasets_list:
+            # print(f"Using dataset {dataset[0]}")
+            for batch_size in [64, 128]:
 
-            # Training Dataloader
-            training_dataloader = DataLoader(dataset[1], batch_size=batch_size)
-            # Testing Dataloader
-            testing_dataloader = DataLoader(dataset[2], batch_size=batch_size)
+                # Training Dataloader
+                training_dataloader = DataLoader(dataset[1], batch_size=batch_size)
+                # Testing Dataloader
+                testing_dataloader = DataLoader(dataset[2], batch_size=batch_size)
 
-            for X, y in testing_dataloader:
-                print(f"Dataset: {dataset[0]}")
-                print(f"Shape of X [N, C, H, W]: {X.shape}")
-                print(f"Shape of y: {y.shape} {y.dtype}")
+                for X, y in testing_dataloader:
+                    print(f"Dataset: {dataset[0]}")
+                    print(f"Shape of X [N, C, H, W]: {X.shape}")
+                    print(f"Shape of y: {y.shape} {y.dtype}")
 
-            for lr in [0.01, 0.001, 0.0001]:
-                for zero_enabled in [False, True]:
-                    ds_config = create_ds_config(batch_size=batch_size, lr=lr, zero_enabled=zero_enabled)
+                for lr in [0.01, 0.001, 0.0001]:
+                    for zero_enabled in [False, True]:
+                        ds_config = create_ds_config(batch_size=batch_size, lr=lr, zero_enabled=zero_enabled)
 
-                    for loss_fn in loss_fn_list:
-                        epochs = 5
-                        for t in range(epochs):
+                        for loss_fn in loss_fn_list:
+                            epochs = 5
+                            total_training_time = 0
+                            epoch_time = 0
+                            dataset_size = len(dataset[1])  # Total number of training samples
                             model_engine, _, _, _ = deepspeed.initialize(args=None,
-                                                                    model=model[1],
-                                                                    config_params=ds_config)
-                            print(f"Epoch {t+1}\n-------------------------------")
-                            train(training_dataloader, model_engine, loss_fn)
-                            test(testing_dataloader, model_engine, loss_fn)
+                                        model=model[1],
+                                        config_params=ds_config)
+                            for t in range(epochs):
+                                print(f"Epoch {t+1}\n-------------------------------")
+                                epoch_time += train(training_dataloader, model_engine, loss_fn)
+                                total_training_time += epoch_time
+                                # test(testing_dataloader, model_engine, loss_fn)
+                            throughput = (dataset_size * epochs) / total_training_time
+                            accuracy, precision, recall = test(testing_dataloader, model_engine, loss_fn)
+                            output = (f"Model: {model[0]}, Dataset: {dataset[0]}, Batch Size: {batch_size}, LR: {lr}, Zero Enabled: {zero_enabled}\n Throughput: {throughput:.2f} samples/second, Total Training Time: {total_training_time:.2f} seconds\n Accuracy: {accuracy:.2f}%, Precision: {precision:.2f}, Recall: {recall:.2f}\n\n")
+
+                            file.write(output)
 print("Done!")
 
 # %%
