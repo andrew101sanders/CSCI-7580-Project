@@ -178,9 +178,6 @@ def test(dataloader, model_engine, loss_fn):
     accuracy = 100 * correct / size
     precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
     recall = recall_score(all_targets, all_preds, average='macro', zero_division=0)
-    # auc = roc_auc_score(all_targets, all_probs, average='macro', multi_class='ovr')
-    # auprc = average_precision_score(all_targets, all_probs, average='macro')
-    # auc, auprc = 0
 
     return accuracy, precision, recall
 # , auc, auprc
