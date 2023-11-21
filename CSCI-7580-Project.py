@@ -8,7 +8,7 @@
 # - [ ] CPU Clock Speed​
 # - [ ] CPUs Available​
 # - [ ] Shared Memory Resources​
-# - [ ] ZeRO Algorithm Enabling ///// AS
+# - [x] ZeRO Algorithm Enabling ///// AS
 # 
 # ### Dependent Variables:
 # - [ ] Training Time​ ///// BB
