@@ -202,36 +202,36 @@ print("Done!")
 # %%
 # Saving Model
 # model_engine.save_checkpoint
-torch.save(model.state_dict(), "model.pth")
-print("Saved PyTorch Model State to model.pth")
+# torch.save(model.state_dict(), "model.pth")
+# print("Saved PyTorch Model State to model.pth")
 
 # %%
 # Loading Model
 
-model = NeuralNetwork().to(device)
-model.load_state_dict(torch.load("model.pth"))
+# model = NeuralNetwork().to(device)
+# model.load_state_dict(torch.load("model.pth"))
 
-# %%
-# Inference
+# # %%
+# # Inference
 
-classes = [
-    "T-shirt/top",
-    "Trouser",
-    "Pullover",
-    "Dress",
-    "Coat",
-    "Sandal",
-    "Shirt",
-    "Sneaker",
-    "Bag",
-    "Ankle boot",
-]
+# classes = [
+#     "T-shirt/top",
+#     "Trouser",
+#     "Pullover",
+#     "Dress",
+#     "Coat",
+#     "Sandal",
+#     "Shirt",
+#     "Sneaker",
+#     "Bag",
+#     "Ankle boot",
+# ]
 
-model.eval()
-x, y = test_data[0][0], test_data[0][1]
-with torch.no_grad():
-    pred = model(x)
-    predicted, actual = classes[pred[0].argmax(0)], classes[y]
-    print(f'Predicted: "{predicted}", Actual: "{actual}"')
+# model.eval()
+# x, y = test_data[0][0], test_data[0][1]
+# with torch.no_grad():
+#     pred = model(x)
+#     predicted, actual = classes[pred[0].argmax(0)], classes[y]
+#     print(f'Predicted: "{predicted}", Actual: "{actual}"')
 
 
