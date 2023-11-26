@@ -193,7 +193,7 @@ def test(dataloader, model_engine, loss_fn):
 with open('training_results.csv', 'a', newline='') as file:  # Open a file in append mode
     writer = csv.writer(file)
     # Write header row
-    writer.writerow(['Model', 'Dataset', 'Batch Size', 'Learning Rate', 'Zero Enabled', 'Throughput', 'Total Training Time', 'Accuracy', 'Precision', 'Recall'])
+    writer.writerow(['Model', 'Dataset', 'Batch Size', 'Learning Rate', 'Zero Enabled', 'Epochs', 'Throughput', 'Total Training Time', 'Accuracy', 'Precision', 'Recall'])
     for model in models_list: 
         # print(f"Training {model[0]}")
         for dataset in datasets_list:
@@ -213,25 +213,24 @@ with open('training_results.csv', 'a', newline='') as file:  # Open a file in ap
                 for lr in [0.01, 0.001, 0.0001]:
                     for zero_enabled in [False, True]:
                         ds_config = create_ds_config(batch_size=batch_size, lr=lr, zero_enabled=zero_enabled)
+                        for epochs in [5, 25, 50]:
+                            for loss_fn in loss_fn_list:
+                                total_training_time = 0
+                                epoch_time = 0
+                                dataset_size = len(dataset[1])  # Total number of training samples
+                                model_engine, _, _, _ = deepspeed.initialize(args=None,
+                                            model=model[1],
+                                            config_params=ds_config)
+                                for t in range(epochs):
+                                    print(f"Epoch {t+1}\n-------------------------------")
+                                    epoch_time += train(training_dataloader, model_engine, loss_fn)
+                                    total_training_time += epoch_time
+                                    # test(testing_dataloader, model_engine, loss_fn)
+                                throughput = (dataset_size * epochs) / total_training_time
+                                accuracy, precision, recall = test(testing_dataloader, model_engine, loss_fn)
 
-                        for loss_fn in loss_fn_list:
-                            epochs = 5
-                            total_training_time = 0
-                            epoch_time = 0
-                            dataset_size = len(dataset[1])  # Total number of training samples
-                            model_engine, _, _, _ = deepspeed.initialize(args=None,
-                                        model=model[1],
-                                        config_params=ds_config)
-                            for t in range(epochs):
-                                print(f"Epoch {t+1}\n-------------------------------")
-                                epoch_time += train(training_dataloader, model_engine, loss_fn)
-                                total_training_time += epoch_time
-                                # test(testing_dataloader, model_engine, loss_fn)
-                            throughput = (dataset_size * epochs) / total_training_time
-                            accuracy, precision, recall = test(testing_dataloader, model_engine, loss_fn)
-
-                            writer.writerow([model[0], dataset[0], batch_size, lr, zero_enabled, f"{throughput:.2f}", f"{total_training_time:.2f}", f"{accuracy:.2f}", f"{precision:.2f}", f"{recall:.2f}"])
-                            file.flush()
+                                writer.writerow([model[0], dataset[0], batch_size, lr, zero_enabled, epochs, f"{throughput:.2f}", f"{total_training_time:.2f}", f"{accuracy:.2f}", f"{precision:.2f}", f"{recall:.2f}"])
+                                file.flush()
 print("Done!")
 
 # %%

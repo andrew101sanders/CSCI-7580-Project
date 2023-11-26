@@ -1,4 +1,0 @@
-Model: AlexNet, Dataset: CIFAR10, Batch Size: 64, LR: 0.01, Zero Enabled: False
- Throughput: 783.57 samples/second, Total Training Time: 63.81 seconds
- Accuracy: 14.73%, Precision: 0.07, Recall: 0.15
-

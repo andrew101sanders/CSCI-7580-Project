@@ -1,2 +1,3 @@
 data/**
 model.pth
+training_results.csv
