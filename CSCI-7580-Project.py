@@ -32,6 +32,7 @@ from torchvision import datasets, models, transforms
 from torchvision.transforms import ToTensor
 from sklearn.metrics import precision_score, recall_score, roc_auc_score, average_precision_score
 import torch.nn.functional as F
+import csv
 
 
 # %%
@@ -189,12 +190,15 @@ def test(dataloader, model_engine, loss_fn):
 # %%
 # Training and Testing Model
 
-with open('training_results.txt', 'w') as file:  # Open a file in append mode
+with open('training_results.csv', 'a', newline='') as file:  # Open a file in append mode
+    writer = csv.writer(file)
+    # Write header row
+    writer.writerow(['Model', 'Dataset', 'Batch Size', 'Learning Rate', 'Zero Enabled', 'Throughput', 'Total Training Time', 'Accuracy', 'Precision', 'Recall'])
     for model in models_list: 
         # print(f"Training {model[0]}")
         for dataset in datasets_list:
             # print(f"Using dataset {dataset[0]}")
-            for batch_size in [64, 128]:
+            for batch_size in [32, 64, 128, 256]:
 
                 # Training Dataloader
                 training_dataloader = DataLoader(dataset[1], batch_size=batch_size)
@@ -225,9 +229,9 @@ with open('training_results.txt', 'w') as file:  # Open a file in append mode
                                 # test(testing_dataloader, model_engine, loss_fn)
                             throughput = (dataset_size * epochs) / total_training_time
                             accuracy, precision, recall = test(testing_dataloader, model_engine, loss_fn)
-                            output = (f"Model: {model[0]}, Dataset: {dataset[0]}, Batch Size: {batch_size}, LR: {lr}, Zero Enabled: {zero_enabled}\n Throughput: {throughput:.2f} samples/second, Total Training Time: {total_training_time:.2f} seconds\n Accuracy: {accuracy:.2f}%, Precision: {precision:.2f}, Recall: {recall:.2f}\n\n")
 
-                            file.write(output)
+                            writer.writerow([model[0], dataset[0], batch_size, lr, zero_enabled, f"{throughput:.2f}", f"{total_training_time:.2f}", f"{accuracy:.2f}", f"{precision:.2f}", f"{recall:.2f}"])
+                            file.flush()
 print("Done!")
 
 # %%
