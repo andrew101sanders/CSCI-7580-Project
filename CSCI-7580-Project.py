@@ -33,6 +33,8 @@ from torchvision.transforms import ToTensor
 from sklearn.metrics import precision_score, recall_score, roc_auc_score, average_precision_score
 import torch.nn.functional as F
 import csv
+import subprocess
+import psutil
 
 # %%
 # Download training data from open datasets.
@@ -85,19 +87,19 @@ print(f"Using {device} device")
 models_list = [
     (
         "AlexNet",
-        models.alexnet(pretrained=False)
+        models.alexnet
     ),
     (
         "VGG16",
-        models.vgg16(pretrained=False)
+        models.vgg16
     ),
     (
         "Inception",
-        models.inception_v3(pretrained=False)
+        models.inception_v3
     ),
     (
         "ResNet50",
-        models.resnet50(pretrained=False)
+        models.resnet50
     )
 ]
 
@@ -131,13 +133,29 @@ def create_ds_config(batch_size=64, lr=0.001, zero_enabled=True):
         "steps_per_print": 10000
     }
     return ds_config
+# %%
+# Monitor functions
 
+def get_gpu_usage():
+    try:
+        nvidia_smi_output = subprocess.check_output("nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader,nounits", shell=True)
+        gpu_utilization, gpu_memory_used = map(int, nvidia_smi_output.decode('utf-8').split(','))
+        return gpu_utilization, gpu_memory_used
+    except Exception as e:
+        print(f"Error getting GPU usage: {e}")
+        return 0, 0
+
+def get_cpu_memory_usage():
+    cpu_usage = psutil.cpu_percent()
+    memory_usage = psutil.virtual_memory().percent
+    return cpu_usage, memory_usage
 # %%
 # Train and Test functions
 def train(dataloader, model_engine, loss_fn):
     size = len(dataloader.dataset)
     model_engine.train()
     start_time = time.time()  # Get training start time
+    cpu_usages, memory_usages, gpu_usages, gpu_memory_usages = [], [], [], []
 
     for batch, (X, y) in enumerate(dataloader):
         # Ensure data is on the correct device
@@ -151,12 +169,24 @@ def train(dataloader, model_engine, loss_fn):
         model_engine.backward(loss)
         model_engine.step()
 
+        cpu_usage, memory_usage = get_cpu_memory_usage()
+        gpu_usage, gpu_memory_usage = get_gpu_usage()
+        cpu_usages.append(cpu_usage)
+        memory_usages.append(memory_usage)
+        gpu_usages.append(gpu_usage)
+        gpu_memory_usages.append(gpu_memory_usage)
+
         if batch % 100 == 0:
             loss, current = loss.item(), (batch + 1) * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
     training_time = time.time() - start_time  # Calculate the total training time
-    return training_time
+    avg_cpu_usage = sum(cpu_usages) / len(cpu_usages) if cpu_usages else 0
+    avg_memory_usage = sum(memory_usages) / len(memory_usages) if memory_usages else 0
+    avg_gpu_usage = sum(gpu_usages) / len(gpu_usages) if gpu_usages else 0
+    avg_gpu_memory_usage = sum(gpu_memory_usages) / len(gpu_memory_usages) if gpu_memory_usages else 0
+
+    return training_time, avg_cpu_usage, avg_memory_usage, avg_gpu_usage, avg_gpu_memory_usage
 
 def test(dataloader, model_engine, loss_fn):
     size = len(dataloader.dataset)
@@ -191,7 +221,7 @@ def test(dataloader, model_engine, loss_fn):
 
 batch_sizes_list = [64, 128, 256]
 lr_list = [0.0005, 0.0015]
-epoch_list = [15, 40]
+epoch_list = [10]
 
 total_models = len(models_list) * len(datasets_list) * len(batch_sizes_list) * len(lr_list) * len([False, True]) * len(epoch_list)
 models_trained = 0
@@ -201,8 +231,25 @@ start_time = time.time()
 with open('training_results.csv', 'w', newline='') as file:  # Open a file in append mode
     writer = csv.writer(file)
     # Write header row
-    writer.writerow(['Model', 'Dataset', 'Batch Size', 'Learning Rate', 'Zero Enabled', 'Loss Function', 'Epochs', 'Epoch Progress', 'Throughput', 'Total Training Time', 'Accuracy', 'Precision', 'Recall'])
-    for model in models_list: 
+    writer.writerow(['Model',
+                     'Dataset',
+                     'Batch Size',
+                     'Learning Rate',
+                     'Zero Enabled',
+                     'Loss Function',
+                     'Epochs',
+                     'Epoch Progress',
+                     'Throughput',
+                     'CPU Usage',
+                     'Memory Usage',
+                     'GPU Usage',
+                     'GPU Memory Usage',
+                     'Total Training Time',
+                     'Accuracy',
+                     'Precision',
+                     'Recall'])
+    for model_info in models_list: 
+        model_name, model_constructor = model_info
         # print(f"Training {model[0]}")
         for dataset in datasets_list:
             # print(f"Using dataset {dataset[0]}")
@@ -224,17 +271,35 @@ with open('training_results.csv', 'w', newline='') as file:  # Open a file in ap
                         for epochs in epoch_list:
                             for loss_fn in loss_fn_list:
                                 
-                                model_engine, _, _, _ = deepspeed.initialize(args=None, model=model[1], config_params=ds_config)
+                                model = model_constructor(pretrained=False)
+                                model_engine, _, _, _ = deepspeed.initialize(args=None, model=model, config_params=ds_config)
                                 total_training_time = 0
                                 dataset_size = len(dataset[1])  # Total number of training samples
 
                                 for epoch_progress in range(epochs):
                                     print(f"Epoch {epoch_progress+1}\n-------------------------------")
 
-                                    total_training_time += train(training_dataloader, model_engine, loss_fn[1])
+                                    epoch_time, cpu_usage, memory_usage, gpu_usage, gpu_memory_usage = train(training_dataloader, model_engine, loss_fn[1])
+                                    total_training_time += epoch_time
                                     accuracy, precision, recall = test(testing_dataloader, model_engine, loss_fn[1])
                                     throughput = (dataset_size * (epoch_progress + 1)) / total_training_time
-                                    writer.writerow([model[0], dataset[0], batch_size, lr, zero_enabled, loss_fn[0], epochs, epoch_progress+1, f"{throughput:.2f}", f"{total_training_time:.2f}", f"{accuracy:.2f}", f"{precision:.2f}", f"{recall:.2f}"])
+                                    writer.writerow([model_name, 
+                                                     dataset[0], 
+                                                     batch_size, 
+                                                     lr, 
+                                                     zero_enabled, 
+                                                     loss_fn[0], 
+                                                     epochs, 
+                                                     epoch_progress+1, 
+                                                     f"{throughput:.2f}", 
+                                                     f"{cpu_usage:.2f}", 
+                                                     f"{memory_usage:.2f}", 
+                                                     f"{gpu_usage:.2f}", 
+                                                     f"{gpu_memory_usage:.2f}", 
+                                                     f"{total_training_time:.2f}", 
+                                                     f"{accuracy:.2f}", 
+                                                     f"{precision:.2f}", 
+                                                     f"{recall:.2f}"])
                                     file.flush()
                             
                                 # Update progress
