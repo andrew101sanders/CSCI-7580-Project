@@ -35,10 +35,27 @@ import torch.nn.functional as F
 import csv
 import subprocess
 import psutil
+from multiprocessing import Process, set_start_method
+import sys
+import os
+
+deepspeed.logger.setLevel("WARNING")
 
 # %%
-# Download training data from open datasets.
+# Get cpu, gpu or mps device for training.
+device = (
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps"
+    if torch.backends.mps.is_available()
+    else "cpu"
+)
+print(f"Using {device} device")
 
+# %%
+# Configuration
+
+# Download training data from open datasets and correctly transform for architectures.
 transform = transforms.Compose([
     transforms.Resize((224, 224)),  # Resize the images to 224x224
     transforms.ToTensor(),
@@ -52,13 +69,13 @@ datasets_list = [
     # ),
     (
      "CIFAR10",
-     datasets.CIFAR10(root="data", train=True, download=True, transform=transform),
-     datasets.CIFAR10(root="data", train=False, download=True, transform=transform)
+     lambda: (datasets.CIFAR10(root="data", train=True, download=True, transform=transform),
+     datasets.CIFAR10(root="data", train=False, download=True, transform=transform))
     ),
     (
      "CIFAR100",
-     datasets.CIFAR100(root="data", train=True, download=True, transform=transform),
-     datasets.CIFAR100(root="data", train=False, download=True, transform=transform)
+     lambda: (datasets.CIFAR100(root="data", train=True, download=True, transform=transform),
+     datasets.CIFAR100(root="data", train=False, download=True, transform=transform))
     ),
     # (
     #  "MNIST",
@@ -67,23 +84,12 @@ datasets_list = [
     # ),
     (
      "SVHN",
-     datasets.SVHN(root="data", split="train", download=True, transform=transform),
-     datasets.SVHN(root="data", split="test", download=True, transform=transform)
+     lambda: (datasets.SVHN(root="data", split="train", download=True, transform=transform),
+     datasets.SVHN(root="data", split="test", download=True, transform=transform))
     )
 ]
 
-
-# %%
-# Get cpu, gpu or mps device for training.
-device = (
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps"
-    if torch.backends.mps.is_available()
-    else "cpu"
-)
-print(f"Using {device} device")
-
+# Benchmark ML architectures
 models_list = [
     (
         "AlexNet",
@@ -103,6 +109,7 @@ models_list = [
     )
 ]
 
+# Loss Functions
 loss_fn_list = [
     (
         "CrossEntropy",
@@ -110,16 +117,28 @@ loss_fn_list = [
     )
 ]
 
-# %%
-# DeepSpeed Configuration
+batch_sizes_list = [128, 256]
+lr_list = [0.0005, 0.0015]
+epoch_list = [10]
 
 def create_ds_config(batch_size=64, lr=0.001, zero_stage=3):
     ds_config = {
         "train_micro_batch_size_per_gpu": batch_size,
         "optimizer": {
-            "type": "SGD",
+            "type": "AdamW",
             "params": {
-                "lr": lr
+                "lr": lr,
+                "betas": (0.9, 0.999),
+                "eps": 1e-8,
+                "weight_decay": 0.01
+            }
+        },
+        "scheduler": {
+            "type": "WarmupLR",
+            "params": {
+                "warmup_min_lr": 0,
+                "warmup_max_lr": lr,
+                "warmup_num_steps": 1000
             }
         },
         "fp16": {
@@ -215,110 +234,131 @@ def test(dataloader, model_engine, loss_fn):
     recall = recall_score(all_targets, all_preds, average='macro', zero_division=0)
 
     return accuracy, precision, recall
-# , auc, auprc
 
+def train_model(stdout_fd, stderr_fd, model_index, dataset_index, batch_size_index, lr_index, zero_stage_index, epochs_index, loss_fn_index):
+    deepspeed.logger.setLevel("WARNING")
+    sys.stdout = os.fdopen(stdout_fd, 'w')
+    sys.stderr = os.fdopen(stderr_fd, 'w')
+
+    model_name, model_constructor = models_list[model_index]
+    dataset_name, dataset_constructor = datasets_list[dataset_index]
+    dataset_train, dataset_test = dataset_constructor()
+    batch_size = batch_sizes_list[batch_size_index]
+    lr = lr_list[lr_index]
+    zero_stage = zero_stage_index
+    epochs = epoch_list[epochs_index]
+    loss_fn = loss_fn_list[loss_fn_index]
+
+    # Training Dataloader
+    training_dataloader = DataLoader(dataset_train, batch_size=batch_size, num_workers=4)
+    # Testing Dataloader
+    testing_dataloader = DataLoader(dataset_test, batch_size=batch_size, num_workers=4)
+
+    ds_config = create_ds_config(batch_size=batch_size, lr=lr, zero_stage=zero_stage)
+
+    with open('training_results.csv', 'a', newline='') as file:  # Open a file in append mode
+        writer = csv.writer(file)
+
+        model = model_constructor(weights=None)
+        model_engine, _, _, _ = deepspeed.initialize(args=None, model=model, config_params=ds_config)
+        total_training_time = 0
+        dataset_size = len(dataset_train)  # Total number of training samples
+
+        for epoch_progress in range(epochs):
+            
+            print(f"Epoch {epoch_progress+1}\n-------------------------------")
+
+            epoch_time, cpu_usage, memory_usage, gpu_usage, gpu_memory_usage = train(training_dataloader, model_engine, loss_fn[1])
+            total_training_time += epoch_time
+            accuracy, precision, recall = test(testing_dataloader, model_engine, loss_fn[1])
+            throughput = (dataset_size * (epoch_progress + 1)) / total_training_time
+            writer.writerow([model_name, 
+                                dataset_name, 
+                                batch_size, 
+                                lr, 
+                                zero_stage, 
+                                loss_fn[0], 
+                                epochs, 
+                                epoch_progress+1, 
+                                f"{throughput:.2f}", 
+                                f"{cpu_usage:.2f}", 
+                                f"{memory_usage:.2f}", 
+                                f"{gpu_usage:.2f}", 
+                                f"{gpu_memory_usage:.2f}", 
+                                f"{total_training_time:.2f}", 
+                                f"{accuracy:.2f}", 
+                                f"{precision:.2f}", 
+                                f"{recall:.2f}"])
+            file.flush()
+
+        # Clear GPU memory
+        del model
+        del model_engine
+        torch.cuda.empty_cache()
 
 # %%
 # Training and Testing Model
 
-deepspeed.logger.setLevel("WARNING")
+if __name__ == '__main__':
 
-batch_sizes_list = [64, 128, 256]
-lr_list = [0.0005, 0.0015]
-epoch_list = [10]
+    set_start_method('spawn')
 
-total_models = len(models_list) * len(datasets_list) * len(batch_sizes_list) * len(lr_list) * len([False, True]) * len(epoch_list)
-models_trained = 0
+    stdout_fd = sys.stdout.fileno()
+    stderr_fd = sys.stderr.fileno()
 
-start_time = time.time()
+    total_models = len(models_list) * len(datasets_list) * len(batch_sizes_list) * len(lr_list) * len([False, True]) * len(epoch_list)
+    models_trained = 0
 
-with open('training_results.csv', 'w', newline='') as file:  # Open a file in append mode
-    writer = csv.writer(file)
-    # Write header row
-    writer.writerow(['Model',
-                     'Dataset',
-                     'Batch Size',
-                     'Learning Rate',
-                     'Zero Stage',
-                     'Loss Function',
-                     'Epochs',
-                     'Epoch Progress',
-                     'Throughput',
-                     'CPU Usage',
-                     'Memory Usage',
-                     'GPU Usage',
-                     'GPU Memory Usage',
-                     'Total Training Time',
-                     'Accuracy',
-                     'Precision',
-                     'Recall'])
-    for model_info in models_list: 
+    start_time = time.time()
 
+    with open('training_results.csv', 'w', newline='') as file:  # Open a file in append mode
+        writer = csv.writer(file)
+        # Write header row
+        writer.writerow(['Model',
+                        'Dataset',
+                        'Batch Size',
+                        'Learning Rate',
+                        'Zero Stage',
+                        'Loss Function',
+                        'Epochs',
+                        'Epoch Progress',
+                        'Throughput',
+                        'CPU Usage',
+                        'Memory Usage',
+                        'GPU Usage',
+                        'GPU Memory Usage',
+                        'Total Training Time',
+                        'Accuracy',
+                        'Precision',
+                        'Recall'])
+        
+    for model_index, model_info in enumerate(models_list): 
         model_name, model_constructor = model_info
-        print(f"Training {model[0]}")
+        print(f"Training {model_name}")
 
-        for dataset in datasets_list:
-
+        for dataset_index, dataset in enumerate(datasets_list):
             print(f"Dataset: {dataset[0]}")
 
-            for batch_size in batch_sizes_list:
-
+            for batch_size_index, batch_size in enumerate(batch_sizes_list):
                 print(f"Batch Size: {batch_size}")
-                # Training Dataloader
-                training_dataloader = DataLoader(dataset[1], batch_size=batch_size)
-                # Testing Dataloader
-                testing_dataloader = DataLoader(dataset[2], batch_size=batch_size)
 
-                for lr in lr_list:
-
+                for lr_index, lr in enumerate(lr_list):
                     print(f"Learning Rate: {lr}")
 
                     # 0 is disabled, 3 is all enabled
-                    for zero_stage in [0, 3]:
-
+                    for zero_stage_index, zero_stage in enumerate([0, 3]):
                         print(f"Zero Stage: {zero_stage}")
-                        ds_config = create_ds_config(batch_size=batch_size, lr=lr, zero_stage=zero_stage)
 
-                        for epochs in epoch_list:
-
+                        for epochs_index, epochs in enumerate(epoch_list):
                             print(f"Epochs: {epochs}")
 
-                            for loss_fn in loss_fn_list:
-
+                            for loss_fn_index, loss_fn in enumerate(loss_fn_list):
                                 print(f"Loss Function: {loss_fn[0]}")
 
-                                model = model_constructor(weights=None)
-                                model_engine, _, _, _ = deepspeed.initialize(args=None, model=model, config_params=ds_config)
-                                total_training_time = 0
-                                dataset_size = len(dataset[1])  # Total number of training samples
-
-                                for epoch_progress in range(epochs):
-                                    
-                                    print(f"Epoch {epoch_progress+1}\n-------------------------------")
-
-                                    epoch_time, cpu_usage, memory_usage, gpu_usage, gpu_memory_usage = train(training_dataloader, model_engine, loss_fn[1])
-                                    total_training_time += epoch_time
-                                    accuracy, precision, recall = test(testing_dataloader, model_engine, loss_fn[1])
-                                    throughput = (dataset_size * (epoch_progress + 1)) / total_training_time
-                                    writer.writerow([model_name, 
-                                                     dataset[0], 
-                                                     batch_size, 
-                                                     lr, 
-                                                     zero_stage, 
-                                                     loss_fn[0], 
-                                                     epochs, 
-                                                     epoch_progress+1, 
-                                                     f"{throughput:.2f}", 
-                                                     f"{cpu_usage:.2f}", 
-                                                     f"{memory_usage:.2f}", 
-                                                     f"{gpu_usage:.2f}", 
-                                                     f"{gpu_memory_usage:.2f}", 
-                                                     f"{total_training_time:.2f}", 
-                                                     f"{accuracy:.2f}", 
-                                                     f"{precision:.2f}", 
-                                                     f"{recall:.2f}"])
-                                    file.flush()
-                            
+                                p = Process(target=train_model, args=(stdout_fd, stderr_fd, model_index, dataset_index, batch_size_index, lr_index, zero_stage_index, epochs_index, loss_fn_index))
+                                p.start()
+                                p.join()
+                                
                                 # Update progress
                                 models_trained += 1
                                 elapsed_time = time.time() - start_time
@@ -327,11 +367,8 @@ with open('training_results.csv', 'w', newline='') as file:  # Open a file in ap
 
                                 print(f"Progress: {models_trained}/{total_models}. Estimated Time Remaining: {estimated_time_remaining/60:.2f} minutes")
 
-                                # Clear GPU memory
-                                del model
-                                del model_engine
-                                torch.cuda.empty_cache()
-print("Done!")
+
+    print("Done!")
 
 # %%
 # Saving Model
