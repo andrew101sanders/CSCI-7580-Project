@@ -113,7 +113,7 @@ loss_fn_list = [
 # %%
 # DeepSpeed Configuration
 
-def create_ds_config(batch_size=64, lr=0.001, zero_enabled=True):
+def create_ds_config(batch_size=64, lr=0.001, zero_stage=3):
     ds_config = {
         "train_micro_batch_size_per_gpu": batch_size,
         "optimizer": {
@@ -125,7 +125,9 @@ def create_ds_config(batch_size=64, lr=0.001, zero_enabled=True):
         "fp16": {
             "enabled": True
         },
-        "zero_optimization": zero_enabled,
+        "zero_optimization": {
+            "stage":zero_stage
+        },
         "zero_allow_untested_optimizer": True,
         "gradient_accumulation_steps": 1,
         "gradient_clipping": 1.0,
@@ -219,6 +221,8 @@ def test(dataloader, model_engine, loss_fn):
 # %%
 # Training and Testing Model
 
+deepspeed.logger.setLevel("WARNING")
+
 batch_sizes_list = [64, 128, 256]
 lr_list = [0.0005, 0.0015]
 epoch_list = [10]
@@ -235,7 +239,7 @@ with open('training_results.csv', 'w', newline='') as file:  # Open a file in ap
                      'Dataset',
                      'Batch Size',
                      'Learning Rate',
-                     'Zero Enabled',
+                     'Zero Stage',
                      'Loss Function',
                      'Epochs',
                      'Epoch Progress',
@@ -249,34 +253,47 @@ with open('training_results.csv', 'w', newline='') as file:  # Open a file in ap
                      'Precision',
                      'Recall'])
     for model_info in models_list: 
+
         model_name, model_constructor = model_info
-        # print(f"Training {model[0]}")
+        print(f"Training {model[0]}")
+
         for dataset in datasets_list:
-            # print(f"Using dataset {dataset[0]}")
+
+            print(f"Dataset: {dataset[0]}")
+
             for batch_size in batch_sizes_list:
 
+                print(f"Batch Size: {batch_size}")
                 # Training Dataloader
                 training_dataloader = DataLoader(dataset[1], batch_size=batch_size)
                 # Testing Dataloader
                 testing_dataloader = DataLoader(dataset[2], batch_size=batch_size)
 
-                for X, y in testing_dataloader:
-                    print(f"Dataset: {dataset[0]}")
-                    print(f"Shape of X [N, C, H, W]: {X.shape}")
-                    print(f"Shape of y: {y.shape} {y.dtype}")
-
                 for lr in lr_list:
-                    for zero_enabled in [False, True]:
-                        ds_config = create_ds_config(batch_size=batch_size, lr=lr, zero_enabled=zero_enabled)
+
+                    print(f"Learning Rate: {lr}")
+
+                    # 0 is disabled, 3 is all enabled
+                    for zero_stage in [0, 3]:
+
+                        print(f"Zero Stage: {zero_stage}")
+                        ds_config = create_ds_config(batch_size=batch_size, lr=lr, zero_stage=zero_stage)
+
                         for epochs in epoch_list:
+
+                            print(f"Epochs: {epochs}")
+
                             for loss_fn in loss_fn_list:
-                                
-                                model = model_constructor(pretrained=False)
+
+                                print(f"Loss Function: {loss_fn[0]}")
+
+                                model = model_constructor(weights=None)
                                 model_engine, _, _, _ = deepspeed.initialize(args=None, model=model, config_params=ds_config)
                                 total_training_time = 0
                                 dataset_size = len(dataset[1])  # Total number of training samples
 
                                 for epoch_progress in range(epochs):
+                                    
                                     print(f"Epoch {epoch_progress+1}\n-------------------------------")
 
                                     epoch_time, cpu_usage, memory_usage, gpu_usage, gpu_memory_usage = train(training_dataloader, model_engine, loss_fn[1])
@@ -287,7 +304,7 @@ with open('training_results.csv', 'w', newline='') as file:  # Open a file in ap
                                                      dataset[0], 
                                                      batch_size, 
                                                      lr, 
-                                                     zero_enabled, 
+                                                     zero_stage, 
                                                      loss_fn[0], 
                                                      epochs, 
                                                      epoch_progress+1, 
@@ -309,6 +326,11 @@ with open('training_results.csv', 'w', newline='') as file:  # Open a file in ap
                                 estimated_time_remaining = avg_time_per_model * (total_models - models_trained)
 
                                 print(f"Progress: {models_trained}/{total_models}. Estimated Time Remaining: {estimated_time_remaining/60:.2f} minutes")
+
+                                # Clear GPU memory
+                                del model
+                                del model_engine
+                                torch.cuda.empty_cache()
 print("Done!")
 
 # %%
