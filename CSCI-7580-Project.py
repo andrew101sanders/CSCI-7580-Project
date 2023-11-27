@@ -39,6 +39,8 @@ from multiprocessing import Process, set_start_method
 import sys
 import os
 
+torch.backends.cudnn.enabled = True
+
 deepspeed.logger.setLevel("WARNING")
 
 # %%
@@ -96,16 +98,16 @@ models_list = [
         models.alexnet
     ),
     (
-        "VGG16",
-        models.vgg16
-    ),
-    (
         "Inception",
         models.inception_v3
     ),
     (
         "ResNet50",
         models.resnet50
+    ),
+    (
+        "VGG16",
+        models.vgg16
     )
 ]
 
@@ -117,7 +119,7 @@ loss_fn_list = [
     )
 ]
 
-batch_sizes_list = [128, 256]
+batch_sizes_list = [32, 64]
 lr_list = [0.0005, 0.0015]
 epoch_list = [10]
 
@@ -197,7 +199,7 @@ def train(dataloader, model_engine, loss_fn):
         gpu_usages.append(gpu_usage)
         gpu_memory_usages.append(gpu_memory_usage)
 
-        if batch % 100 == 0:
+        if batch % 10 == 0:
             loss, current = loss.item(), (batch + 1) * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
@@ -236,6 +238,7 @@ def test(dataloader, model_engine, loss_fn):
     return accuracy, precision, recall
 
 def train_model(stdout_fd, stderr_fd, model_index, dataset_index, batch_size_index, lr_index, zero_stage_index, epochs_index, loss_fn_index):
+    torch.backends.cudnn.enabled = True
     deepspeed.logger.setLevel("WARNING")
     sys.stdout = os.fdopen(stdout_fd, 'w')
     sys.stderr = os.fdopen(stderr_fd, 'w')
@@ -250,9 +253,15 @@ def train_model(stdout_fd, stderr_fd, model_index, dataset_index, batch_size_ind
     loss_fn = loss_fn_list[loss_fn_index]
 
     # Training Dataloader
-    training_dataloader = DataLoader(dataset_train, batch_size=batch_size, num_workers=4)
+    training_dataloader = DataLoader(dataset_train,
+                                     batch_size=batch_size, 
+                                     pin_memory=True,
+                                     num_workers=4)
     # Testing Dataloader
-    testing_dataloader = DataLoader(dataset_test, batch_size=batch_size, num_workers=4)
+    testing_dataloader = DataLoader(dataset_test, 
+                                    batch_size=batch_size, 
+                                    pin_memory=True,
+                                    num_workers=4)
 
     ds_config = create_ds_config(batch_size=batch_size, lr=lr, zero_stage=zero_stage)
 
