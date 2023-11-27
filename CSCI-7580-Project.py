@@ -34,7 +34,6 @@ from sklearn.metrics import precision_score, recall_score, roc_auc_score, averag
 import torch.nn.functional as F
 import csv
 
-
 # %%
 # Download training data from open datasets.
 
@@ -103,7 +102,10 @@ models_list = [
 ]
 
 loss_fn_list = [
-    nn.CrossEntropyLoss()
+    (
+        "CrossEntropy",
+        nn.CrossEntropyLoss()
+    )
 ]
 
 # %%
@@ -187,15 +189,24 @@ def test(dataloader, model_engine, loss_fn):
 # %%
 # Training and Testing Model
 
-with open('training_results.csv', 'a', newline='') as file:  # Open a file in append mode
+batch_sizes_list = [64, 128, 256]
+lr_list = [0.0005, 0.0015]
+epoch_list = [15, 40]
+
+total_models = len(models_list) * len(datasets_list) * len(batch_sizes_list) * len(lr_list) * len([False, True]) * len(epoch_list)
+models_trained = 0
+
+start_time = time.time()
+
+with open('training_results.csv', 'w', newline='') as file:  # Open a file in append mode
     writer = csv.writer(file)
     # Write header row
-    writer.writerow(['Model', 'Dataset', 'Batch Size', 'Learning Rate', 'Zero Enabled', 'Epochs', 'Throughput', 'Total Training Time', 'Accuracy', 'Precision', 'Recall'])
+    writer.writerow(['Model', 'Dataset', 'Batch Size', 'Learning Rate', 'Zero Enabled', 'Loss Function', 'Epochs', 'Epoch Progress', 'Throughput', 'Total Training Time', 'Accuracy', 'Precision', 'Recall'])
     for model in models_list: 
         # print(f"Training {model[0]}")
         for dataset in datasets_list:
             # print(f"Using dataset {dataset[0]}")
-            for batch_size in [32, 64, 128, 256]:
+            for batch_size in batch_sizes_list:
 
                 # Training Dataloader
                 training_dataloader = DataLoader(dataset[1], batch_size=batch_size)
@@ -207,27 +218,32 @@ with open('training_results.csv', 'a', newline='') as file:  # Open a file in ap
                     print(f"Shape of X [N, C, H, W]: {X.shape}")
                     print(f"Shape of y: {y.shape} {y.dtype}")
 
-                for lr in [0.01, 0.001, 0.0001]:
+                for lr in lr_list:
                     for zero_enabled in [False, True]:
                         ds_config = create_ds_config(batch_size=batch_size, lr=lr, zero_enabled=zero_enabled)
-                        for epochs in [5, 25, 50]:
+                        for epochs in epoch_list:
                             for loss_fn in loss_fn_list:
+                                
+                                model_engine, _, _, _ = deepspeed.initialize(args=None, model=model[1], config_params=ds_config)
                                 total_training_time = 0
-                                epoch_time = 0
                                 dataset_size = len(dataset[1])  # Total number of training samples
-                                model_engine, _, _, _ = deepspeed.initialize(args=None,
-                                            model=model[1],
-                                            config_params=ds_config)
-                                for t in range(epochs):
-                                    print(f"Epoch {t+1}\n-------------------------------")
-                                    epoch_time += train(training_dataloader, model_engine, loss_fn)
-                                    total_training_time += epoch_time
-                                    # test(testing_dataloader, model_engine, loss_fn)
-                                throughput = (dataset_size * epochs) / total_training_time
-                                accuracy, precision, recall = test(testing_dataloader, model_engine, loss_fn)
 
-                                writer.writerow([model[0], dataset[0], batch_size, lr, zero_enabled, epochs, f"{throughput:.2f}", f"{total_training_time:.2f}", f"{accuracy:.2f}", f"{precision:.2f}", f"{recall:.2f}"])
-                                file.flush()
+                                for epoch_progress in range(epochs):
+                                    print(f"Epoch {epoch_progress+1}\n-------------------------------")
+
+                                    total_training_time += train(training_dataloader, model_engine, loss_fn[1])
+                                    accuracy, precision, recall = test(testing_dataloader, model_engine, loss_fn[1])
+                                    throughput = (dataset_size * (epoch_progress + 1)) / total_training_time
+                                    writer.writerow([model[0], dataset[0], batch_size, lr, zero_enabled, loss_fn[0], epochs, epoch_progress+1, f"{throughput:.2f}", f"{total_training_time:.2f}", f"{accuracy:.2f}", f"{precision:.2f}", f"{recall:.2f}"])
+                                    file.flush()
+                            
+                                # Update progress
+                                models_trained += 1
+                                elapsed_time = time.time() - start_time
+                                avg_time_per_model = elapsed_time / models_trained
+                                estimated_time_remaining = avg_time_per_model * (total_models - models_trained)
+
+                                print(f"Progress: {models_trained}/{total_models}. Estimated Time Remaining: {estimated_time_remaining/60:.2f} minutes")
 print("Done!")
 
 # %%
