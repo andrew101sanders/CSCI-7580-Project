@@ -41,7 +41,7 @@ import os
 
 torch.backends.cudnn.enabled = True
 
-deepspeed.logger.setLevel("WARNING")
+# deepspeed.logger.setLevel("WARNING")
 
 # %%
 # Get cpu, gpu or mps device for training.
@@ -98,7 +98,7 @@ models_list = [
         models.alexnet
     ),
     (
-        "Inception",
+        "Inception", # expects 299x299
         models.inception_v3
     ),
     (
@@ -239,7 +239,7 @@ def test(dataloader, model_engine, loss_fn):
 
 def train_model(stdout_fd, stderr_fd, model_index, dataset_index, batch_size_index, lr_index, zero_stage_index, epochs_index, loss_fn_index):
     torch.backends.cudnn.enabled = True
-    deepspeed.logger.setLevel("WARNING")
+    #deepspeed.logger.setLevel("WARNING")
     sys.stdout = os.fdopen(stdout_fd, 'w')
     sys.stderr = os.fdopen(stderr_fd, 'w')
 
@@ -330,7 +330,7 @@ if __name__ == '__main__':
     stdout_fd = sys.stdout.fileno()
     stderr_fd = sys.stderr.fileno()
 
-    total_models = len(models_list) * len(datasets_list) * len(batch_sizes_list) * len(lr_list) * len([False, True]) * len(epoch_list)
+    total_models = len(models_list) * len(datasets_list) * len(batch_sizes_list) * len(lr_list) * len([0, 3]) * len(epoch_list)
     models_trained = 0
 
     start_time = time.time()
