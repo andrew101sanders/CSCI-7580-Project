@@ -308,6 +308,21 @@ def train_model(stdout_fd, stderr_fd, model_index, dataset_index, batch_size_ind
 # %%
 # Training and Testing Model
 
+def get_completed_configs(csv_file):
+    completed_configs = set()
+    try:
+        with open(csv_file, mode='r') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if int(row['Epoch Progress']) == int(row['Epochs']):
+                    config = (row['Model'], row['Dataset'], int(row['Batch Size']), 
+                              float(row['Learning Rate']), int(row['Zero Stage']), 
+                              row['Loss Function'], int(row['Epochs']))
+                    completed_configs.add(config)
+    except FileNotFoundError:
+        pass  # File not found, so no configurations are completed
+    return completed_configs
+
 if __name__ == '__main__':
 
     set_start_method('spawn')
@@ -320,33 +335,28 @@ if __name__ == '__main__':
 
     start_time = time.time()
 
-    with open('training_results.csv', 'w', newline='') as file:  # Open a file in append mode
+    csv_file = 'training_results.csv'
+    completed_configs = get_completed_configs('training_results.csv')
+    models_trained += len(completed_configs)
+
+    print(f"completed configs: {completed_configs}")
+    file_exists = os.path.isfile(csv_file)
+
+    with open(csv_file, 'a', newline='') as file:  # Open a file in append mode
         writer = csv.writer(file)
-        # Write header row
-        writer.writerow(['Model',
-                        'Dataset',
-                        'Batch Size',
-                        'Learning Rate',
-                        'Zero Stage',
-                        'Loss Function',
-                        'Epochs',
-                        'Epoch Progress',
-                        'Throughput',
-                        'CPU Usage',
-                        'Memory Usage',
-                        'GPU Usage',
-                        'GPU Memory Usage',
-                        'Total Training Time',
-                        'Accuracy',
-                        'Precision',
-                        'Recall'])
+
+        # Write the header only if the file did not exist
+        if not file_exists:
+            writer.writerow(['Model', 'Dataset', 'Batch Size', 'Learning Rate', 'Zero Stage', 'Loss Function', 'Epochs', 'Epoch Progress', 'Throughput', 'CPU Usage', 'Memory Usage', 'GPU Usage', 'GPU Memory Usage', 'Total Training Time', 'Accuracy', 'Precision', 'Recall'])
+
         
     for model_index, model_info in enumerate(models_list): 
         model_name, model_constructor = model_info
         print(f"Training {model_name}")
 
         for dataset_index, dataset in enumerate(datasets_list):
-            print(f"Dataset: {dataset[0]}")
+            dataset_name, _ = dataset
+            print(f"Dataset: {dataset_name}")
 
             for batch_size_index, batch_size in enumerate(batch_sizes_list):
                 print(f"Batch Size: {batch_size}")
@@ -362,7 +372,14 @@ if __name__ == '__main__':
                             print(f"Epochs: {epochs}")
 
                             for loss_fn_index, loss_fn in enumerate(loss_fn_list):
-                                print(f"Loss Function: {loss_fn[0]}")
+                                loss_fn_name, _ = loss_fn
+                                print(f"Loss Function: {loss_fn_name}")
+
+                                current_config = (model_name, dataset_name, batch_size, lr, zero_stage_index, loss_fn_name, epochs)
+                                print(f'current config: {current_config}')
+                                if current_config in completed_configs:
+                                    print(f"Skipping completed configuration: {current_config}")
+                                    continue
 
                                 p = Process(target=train_model, args=(stdout_fd, stderr_fd, model_index, dataset_index, batch_size_index, lr_index, zero_stage_index, epochs_index, loss_fn_index))
                                 p.start()
