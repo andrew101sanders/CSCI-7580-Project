@@ -11,6 +11,15 @@ We ran DeepSpeed under [WSL2 Ubuntu](https://learn.microsoft.com/en-us/windows/w
 
 Additional configurations are needed to allow for GPU/CUDA usage, such as installing the CUDA toolkit in your operating system (see online documentation for [CUDA Toolkit for WSL](https://docs.nvidia.com/cuda/wsl-user-guide/index.html), for example).
 
+An ".deepspeed_env" file can be placed in the home diretory (e.g., /home/andrew/) that specifies exports for DeepSpeed. For our case, we used
+
+```
+NCCL_IB_DISABLE=1
+NCCL_SOCKET_IFNAME=wg0
+NCCL_DEBUG=INFO
+```
+which indicates that InfiniBand should be disabled, the wg0 (WireGuard) interface should be used, and debug level should be INFO.
+
 The command we used for our final results is as follows:
 
 **deepspeed --master_addr=20.0.0.2 --master_port=29500 --hostfile=hostfile CSCI-7580-Project.py --deepspeed**

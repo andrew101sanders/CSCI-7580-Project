@@ -1,3 +1,54 @@
+'''
+    CSCI-7580 Project Script
+
+    Paper Title:
+        Leveraging DeepSpeed's Hybrid Parallel Programming Model for Efficient Training of Convolutional Neural Networks in Image Classification Tasks
+
+    Authors:
+        Andrew Sanders
+        Brad Boswell
+
+    Course:
+        CSCI-7580 Computer Architecture
+    
+    Professor:
+        Dr. Abdullah Al-Mamun
+
+    Description:
+        This file contains the code to train a wide range of convolutional network configurations to test 
+        the capabilities of Microsoft's DeepSpeed distributed machine learning framework. To run this, 
+        DeepSpeed needs to be installed and a hostfile needs to be specified. The command to run this is
+
+        ```
+        deepspeed --hostfile=hostfile CSCI-7580-Project.py --deepspeed
+        ```
+
+        which will use DeepSpeed to run this file. If the hostfile has multiple nodes specified, the models will be
+        trained using distributed computing.
+
+        An example hostfile is as follows:
+
+        ```
+        Andrew slots=1
+        Brad slots=1
+        ```
+
+        in which Andrew and Brad are specified as Hosts in .ssh/config. IPs can be used instead, but ports need to be
+        allowed through the firewall.
+
+        Additionally, a ".deepspeed_env" file can be placed in the home directory (e.g., /home/andrew/) that specifies a few NCCL exports.
+        For our tests, we used
+
+        ```
+        NCCL_IB_DISABLE=1
+        NCCL_SOCKET_IFNAME=wg0
+        NCCL_DEBUG=INFO
+        ```
+
+        which indicates that InfiniBand should be disabled, the wg0 (WireGuard) interface should be used, and debug level should be INFO
+'''
+
+
 # %%
 import deepspeed
 import torch
