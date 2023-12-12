@@ -1,5 +1,9 @@
 # Leveraging DeepSpeed's Hybrid Parallel Programming Model for Efficient Training of Convolutional Neural Networks in Image Classification Tasks
 
+Authors:
+- Andrew Sanders
+- Brad Boswell
+
 This is the respository of our Fall 2023 CSCI-7580 Project for Dr. Abdullah Al-Mamun's CSCI-7580 Computer Architecture Course. The main script is CSCI-7580-Project.py. The results are contained in the following files:
 - NonDistributed_AndrewComputer_training_results.csv
 - Distributed_AndrewComputer_training_results.csv
